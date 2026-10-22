@@ -509,6 +509,33 @@ impl CommonState {
         self.sendable_tls.append(m.encode());
     }
 
+    pub(crate) fn send_reality_record(
+        &mut self,
+        content: &[u8],
+        typ: ContentType,
+        wire_len: usize,
+    ) -> Result<(), Error> {
+        if self.is_quic() || !self.is_tls13() {
+            return Err(crate::reality::incompatible());
+        }
+        let padding = crate::reality::padding_for(content.len(), wire_len)?;
+        let message = self
+            .record_layer
+            .encrypt_outgoing_with_padding(
+                OutboundPlainMessage {
+                    typ,
+                    version: ProtocolVersion::TLSv1_2,
+                    payload: content.into(),
+                },
+                padding,
+            )?;
+        if message.payload.as_ref().len() + 5 != wire_len {
+            return Err(crate::reality::incompatible());
+        }
+        self.queue_tls_message(message);
+        Ok(())
+    }
+
     pub(crate) fn perhaps_write_key_update(&mut self) {
         if let Some(message) = self.queued_key_update_message.take() {
             self.sendable_tls.append(message);
@@ -1131,6 +1158,20 @@ impl<'a, const TLS13: bool> HandshakeFlight<'a, TLS13> {
 #[cfg(feature = "tls12")]
 pub(crate) type HandshakeFlightTls12<'a> = HandshakeFlight<'a, false>;
 pub(crate) type HandshakeFlightTls13<'a> = HandshakeFlight<'a, true>;
+
+impl HandshakeFlightTls13<'_> {
+    pub(crate) fn finish_reality(
+        self,
+        common: &mut CommonState,
+        plan: &crate::reality::FlightPlan,
+    ) -> Result<(), Error> {
+        let records = plan.fragments(&self.body)?;
+        for (content, wire_len) in records {
+            common.send_reality_record(content, ContentType::Handshake, wire_len)?;
+        }
+        Ok(())
+    }
+}
 
 const DEFAULT_RECEIVED_PLAINTEXT_LIMIT: usize = 16 * 1024;
 pub(crate) const DEFAULT_BUFFER_LIMIT: usize = 64 * 1024;

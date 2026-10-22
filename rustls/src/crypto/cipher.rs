@@ -154,6 +154,20 @@ pub trait MessageEncrypter: Send + Sync {
         seq: u64,
     ) -> Result<OutboundOpaqueMessage, Error>;
 
+    /// Encrypt a TLS 1.3 record with trailing zero padding after its inner content type.
+    /// Providers that do not implement padding reject nonzero padding by default.
+    fn encrypt_with_padding(
+        &mut self,
+        msg: OutboundPlainMessage<'_>,
+        seq: u64,
+        padding: usize,
+    ) -> Result<OutboundOpaqueMessage, Error> {
+        if padding != 0 {
+            return Err(crate::reality::incompatible());
+        }
+        self.encrypt(msg, seq)
+    }
+
     /// Return the length of the ciphertext that results from encrypting plaintext of
     /// length `payload_len`
     fn encrypted_payload_len(&self, payload_len: usize) -> usize;

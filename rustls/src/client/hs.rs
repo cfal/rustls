@@ -730,8 +730,9 @@ impl State<ClientConnectionData> for ExpectServerHello {
             };
             hooks.server_hello(&cx.data.reality_client_hello, encoded.bytes())?;
             cx.data.reality_client_hello.clear();
+        } else {
+            trace!("We got ServerHello {server_hello:#?}");
         }
-        trace!("We got ServerHello {server_hello:#?}");
 
         use crate::ProtocolVersion::{TLSv1_2, TLSv1_3};
         let config = &self.input.config;

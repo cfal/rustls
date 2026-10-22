@@ -661,6 +661,45 @@ mod connection {
             })
         }
 
+        /// Make a TLS 1.3 REALITY server using an authenticated client's prepared
+        /// target template. The certificate resolver must bind its certificate to
+        /// the prepared hello. Resumption, early data and compression are disabled.
+        pub fn new_reality(
+            config: Arc<ServerConfig>,
+            prepared: crate::reality::PreparedServerHello,
+        ) -> Result<Self, Error> {
+            if config.supports_version(
+                crate::ProtocolVersion::TLSv1_2,
+                crate::common_state::Protocol::Tcp,
+            ) || !config.alpn_protocols.is_empty()
+                || config.verifier.offer_client_auth()
+                || config.max_early_data_size != 0
+            {
+                return Err(crate::reality::incompatible());
+            }
+            let mut config = (*config).clone();
+            let mut provider = (*config.provider).clone();
+            provider
+                .cipher_suites
+                .retain(|s| s.suite() == prepared.cipher_suite());
+            provider
+                .kx_groups
+                .retain(|g| g.name() == prepared.group());
+            if provider.cipher_suites.is_empty() || provider.kx_groups.is_empty() {
+                return Err(crate::reality::incompatible());
+            }
+            config.provider = Arc::new(provider);
+            config.session_storage = Arc::new(crate::server::handy::NoServerSessionStorage {});
+            config.ticketer = Arc::new(crate::server::handy::NeverProducesTickets {});
+            config.send_tls13_tickets = 0;
+            config.max_tls13_tickets = 0;
+            config.cert_compressors.clear();
+            let mut connection = Self::new(Arc::new(config))?;
+            connection.inner.core.common_state.fips = false;
+            connection.inner.core.data.reality = Some(prepared);
+            Ok(connection)
+        }
+
         /// Retrieves the server name, if any, used to select the certificate and
         /// private key.
         ///
@@ -1252,6 +1291,7 @@ impl ConnectionCore<ServerConnectionData> {
 /// State associated with a server connection.
 #[derive(Default, Debug)]
 pub struct ServerConnectionData {
+    pub(super) reality: Option<crate::reality::PreparedServerHello>,
     pub(super) sni: Option<DnsName<'static>>,
     pub(super) received_resumption_data: Option<Vec<u8>>,
     pub(super) resumption_data: Vec<u8>,
