@@ -674,8 +674,11 @@ mod connection {
             ) || !config.alpn_protocols.is_empty()
                 || config.verifier.offer_client_auth()
                 || config.max_early_data_size != 0
+                || config.max_fragment_size.is_some()
             {
-                return Err(crate::reality::incompatible());
+                return Err(Error::General(
+                    "invalid REALITY server configuration".into(),
+                ));
             }
             let mut config = (*config).clone();
             let mut provider = (*config.provider).clone();

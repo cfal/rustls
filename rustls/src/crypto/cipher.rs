@@ -163,7 +163,9 @@ pub trait MessageEncrypter: Send + Sync {
         padding: usize,
     ) -> Result<OutboundOpaqueMessage, Error> {
         if padding != 0 {
-            return Err(crate::reality::incompatible());
+            return Err(Error::General(
+                "provider does not support TLS record padding".into(),
+            ));
         }
         self.encrypt(msg, seq)
     }

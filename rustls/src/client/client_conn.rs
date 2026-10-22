@@ -750,7 +750,9 @@ mod connection {
                 || config.ech_mode.is_some()
                 || config.enable_early_data
             {
-                return Err(crate::reality::incompatible());
+                return Err(Error::General(
+                    "invalid REALITY client configuration".into(),
+                ));
             }
             let mut config = (*config).clone();
             config.resumption = super::Resumption::disabled();
