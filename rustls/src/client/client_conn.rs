@@ -737,6 +737,35 @@ mod connection {
             Self::new_with_alpn(config.clone(), name, config.alpn_protocols.clone())
         }
 
+        /// Make a TLS 1.3 REALITY connection with connection-owned hooks.
+        ///
+        /// The caller must configure REALITY certificate verification. TLS 1.2,
+        /// ECH and early data are rejected; resumption is disabled for this connection.
+        pub fn new_reality(
+            config: Arc<ClientConfig>,
+            name: ServerName<'static>,
+            hooks: alloc::boxed::Box<dyn crate::reality::ClientHooks>,
+        ) -> Result<Self, Error> {
+            if config.supports_version(crate::ProtocolVersion::TLSv1_2, Protocol::Tcp)
+                || config.ech_mode.is_some()
+                || config.enable_early_data
+            {
+                return Err(crate::reality::incompatible());
+            }
+            let mut config = (*config).clone();
+            config.resumption = super::Resumption::disabled();
+            let alpn = config.alpn_protocols.clone();
+            Ok(Self {
+                inner: ConnectionCommon::from(ConnectionCore::for_client_with_reality(
+                    Arc::new(config),
+                    name,
+                    ClientExtensionsInput::from_alpn(alpn),
+                    Protocol::Tcp,
+                    Some(hooks),
+                )?),
+            })
+        }
+
         /// Make a new ClientConnection with custom ALPN protocols.
         pub fn new_with_alpn(
             config: Arc<ClientConfig>,
@@ -874,12 +903,26 @@ impl ConnectionCore<ClientConnectionData> {
         extra_exts: ClientExtensionsInput<'static>,
         proto: Protocol,
     ) -> Result<Self, Error> {
+        Self::for_client_with_reality(config, name, extra_exts, proto, None)
+    }
+
+    fn for_client_with_reality(
+        config: Arc<ClientConfig>,
+        name: ServerName<'static>,
+        extra_exts: ClientExtensionsInput<'static>,
+        proto: Protocol,
+        reality: Option<alloc::boxed::Box<dyn crate::reality::ClientHooks>>,
+    ) -> Result<Self, Error> {
         let mut common_state = CommonState::new(Side::Client);
         common_state.set_max_fragment_size(config.max_fragment_size)?;
         common_state.protocol = proto;
         common_state.enable_secret_extraction = config.enable_secret_extraction;
         common_state.fips = config.fips();
         let mut data = ClientConnectionData::new();
+        if reality.is_some() {
+            common_state.fips = false;
+        }
+        data.reality = reality;
 
         let mut cx = hs::ClientContext {
             common: &mut common_state,
@@ -1075,6 +1118,8 @@ impl std::error::Error for EarlyDataError {}
 pub struct ClientConnectionData {
     pub(super) early_data: EarlyData,
     pub(super) ech_status: EchStatus,
+    pub(super) reality: Option<alloc::boxed::Box<dyn crate::reality::ClientHooks>>,
+    pub(super) reality_client_hello: Vec<u8>,
 }
 
 impl ClientConnectionData {
@@ -1082,6 +1127,8 @@ impl ClientConnectionData {
         Self {
             early_data: EarlyData::new(),
             ech_status: EchStatus::NotOffered,
+            reality: None,
+            reality_client_hello: Vec::new(),
         }
     }
 }

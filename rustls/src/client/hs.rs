@@ -27,6 +27,7 @@ use crate::error::{Error, PeerIncompatible, PeerMisbehaved};
 use crate::hash_hs::HandshakeHashBuffer;
 use crate::log::{debug, trace};
 use crate::msgs::base::Payload;
+use crate::msgs::codec::Codec;
 use crate::msgs::enums::{Compression, ExtensionType};
 use crate::msgs::handshake::{
     CertificateStatusRequest, ClientExtensions, ClientExtensionsInput, ClientHelloPayload,
@@ -153,7 +154,15 @@ impl ClientHelloInput {
             transcript_buffer.set_client_auth_enabled();
         }
 
-        let key_share = if self.config.needs_key_share() {
+        let key_share = if let Some(hooks) = cx.data.reality.as_mut() {
+            let group = self.config.provider.kx_groups[0];
+            let exchange = hooks.start_key_exchange(group)?;
+            if exchange.group() != group.name() {
+                return Err(crate::reality::incompatible());
+            }
+            cx.common.kx_state = KxState::Start(group);
+            Some(exchange)
+        } else if self.config.needs_key_share() {
             Some(tls13::initial_key_share(
                 &self.config,
                 &self.server_name,
@@ -198,6 +207,9 @@ fn emit_client_hello_for_retry(
     cx: &mut ClientContext<'_>,
     mut ech_state: Option<EchState>,
 ) -> NextStateOrError<'static> {
+    if cx.data.reality.is_some() && retryreq.is_some() {
+        return Err(crate::reality::incompatible());
+    }
     let config = &input.config;
     // Defense in depth: the ECH state should be None if ECH is disabled based on config
     // builder semantics.
@@ -467,7 +479,7 @@ fn emit_client_hello_for_retry(
         _ => None,
     };
 
-    let ch = Message {
+    let mut ch = Message {
         version: match retryreq {
             // <https://datatracker.ietf.org/doc/html/rfc8446#section-5.1>:
             // "This value MUST be set to 0x0303 for all records generated
@@ -489,7 +501,26 @@ fn emit_client_hello_for_retry(
         tls13::emit_fake_ccs(&mut input.sent_tls13_fake_ccs, cx.common);
     }
 
-    trace!("Sending ClientHello {ch:#?}");
+    if let Some(hooks) = cx.data.reality.as_mut() {
+        let MessagePayload::Handshake { parsed, encoded } = &mut ch.payload else {
+            return Err(crate::reality::incompatible());
+        };
+        let HandshakePayload::ClientHello(hello) = &mut parsed.0 else {
+            return Err(crate::reality::incompatible());
+        };
+        let mut bytes = encoded.bytes().to_vec();
+        if bytes.get(38) != Some(&32) || bytes.len() < 71 {
+            return Err(crate::reality::incompatible());
+        }
+        let id = hooks.session_id(&bytes)?;
+        bytes[39..71].copy_from_slice(&id);
+        input.session_id = SessionId::read_bytes(&bytes[38..71])?;
+        hello.session_id = input.session_id;
+        cx.data.reality_client_hello = bytes.clone();
+        *encoded = Payload::new(bytes);
+    } else {
+        trace!("Sending ClientHello {ch:#?}");
+    }
 
     transcript_buffer.add_message(&ch);
     cx.common.send_msg(ch, false);
@@ -690,6 +721,16 @@ impl State<ClientConnectionData> for ExpectServerHello {
     {
         let server_hello =
             require_handshake_msg!(m, HandshakeType::ServerHello, HandshakePayload::ServerHello)?;
+        if let Some(mut hooks) = cx.data.reality.take() {
+            if server_hello.session_id != self.input.session_id {
+                return Err(crate::reality::incompatible());
+            }
+            let MessagePayload::Handshake { encoded, .. } = &m.payload else {
+                return Err(crate::reality::incompatible());
+            };
+            hooks.server_hello(&cx.data.reality_client_hello, encoded.bytes())?;
+            cx.data.reality_client_hello.clear();
+        }
         trace!("We got ServerHello {server_hello:#?}");
 
         use crate::ProtocolVersion::{TLSv1_2, TLSv1_3};
