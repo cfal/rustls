@@ -349,6 +349,9 @@ impl ExpectClientHello {
         m: &Message<'_>,
         cx: &mut ServerContext<'_>,
     ) -> NextStateOrError<'static> {
+        if let Some(prepared) = &cx.data.reality {
+            prepared.check_client(m)?;
+        }
         let tls13_enabled = self
             .config
             .supports_version(ProtocolVersion::TLSv1_3, cx.common.protocol);
@@ -510,7 +513,10 @@ impl ExpectClientHello {
         // Save their Random.
         let randoms = ConnectionRandoms::new(
             client_hello.random,
-            Random::new(self.config.provider.secure_random)?,
+            match &cx.data.reality {
+                Some(prepared) => prepared.random,
+                None => Random::new(self.config.provider.secure_random)?,
+            },
         );
         match suite {
             SupportedCipherSuite::Tls13(suite) => tls13::CompleteClientHelloHandling {
@@ -715,7 +721,9 @@ pub(super) fn process_client_hello<'m>(
 ) -> Result<(&'m ClientHelloPayload, Vec<SignatureScheme>), Error> {
     let client_hello =
         require_handshake_msg!(m, HandshakeType::ClientHello, HandshakePayload::ClientHello)?;
-    trace!("we got a clienthello {client_hello:?}");
+    if cx.data.reality.is_none() {
+        trace!("we got a clienthello {client_hello:?}");
+    }
 
     if !client_hello
         .compression_methods

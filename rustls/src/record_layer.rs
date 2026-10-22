@@ -117,6 +117,23 @@ impl RecordLayer {
             .unwrap()
     }
 
+    pub(crate) fn encrypt_outgoing_with_padding(
+        &mut self,
+        plain: OutboundPlainMessage<'_>,
+        padding: usize,
+    ) -> Result<OutboundOpaqueMessage, Error> {
+        if self.encrypt_state != DirectionState::Active
+            || self.next_pre_encrypt_action() != PreEncryptAction::Nothing
+        {
+            return Err(Error::EncryptError);
+        }
+        crate::reality::padded_plaintext_len(plain.payload.len(), padding)?;
+        let seq = self.write_seq;
+        self.write_seq += 1;
+        self.message_encrypter
+            .encrypt_with_padding(plain, seq, padding)
+    }
+
     /// Prepare to use the given `MessageEncrypter` for future message encryption.
     /// It is not used until you call `start_encrypting`.
     pub(crate) fn prepare_message_encrypter(

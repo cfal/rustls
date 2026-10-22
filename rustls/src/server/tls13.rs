@@ -467,7 +467,7 @@ mod client_hello {
 
             cx.common.check_aligned_handshake()?;
             let key_schedule_traffic =
-                emit_finished_tls13(flight, &self.randoms, cx, key_schedule, &self.config);
+                emit_finished_tls13(flight, &self.randoms, cx, key_schedule, &self.config)?;
 
             if !doing_client_auth && self.config.send_half_rtt_data {
                 // Application data can be sent immediately after Finished, in one
@@ -537,12 +537,19 @@ mod client_hello {
         // Prepare key exchange; the caller already found the matching SupportedKxGroup
         let (share, kxgroup) = share_and_kxgroup;
         debug_assert_eq!(kxgroup.name(), share.group);
-        let ckx = kxgroup
-            .start_and_complete(&share.payload.0)
-            .map_err(|err| {
-                cx.common
-                    .send_fatal_alert(AlertDescription::IllegalParameter, err)
-            })?;
+        let ckx = if let Some(prepared) = cx.data.reality.as_mut() {
+            if chosen_psk_idx.is_some() || resuming_psk.is_some() {
+                return Err(crate::reality::incompatible());
+            }
+            prepared.take_exchange(suite.common.suite, session_id, share)?
+        } else {
+            kxgroup
+                .start_and_complete(&share.payload.0)
+                .map_err(|err| {
+                    cx.common
+                        .send_fatal_alert(AlertDescription::IllegalParameter, err)
+                })?
+        };
         cx.common.kx_state.complete();
 
         let extensions = Box::new(ServerExtensions {
@@ -552,25 +559,31 @@ mod client_hello {
             ..Default::default()
         });
 
-        let sh = Message {
-            version: ProtocolVersion::TLSv1_2,
-            payload: MessagePayload::handshake(HandshakeMessagePayload(
-                HandshakePayload::ServerHello(ServerHelloPayload {
-                    legacy_version: ProtocolVersion::TLSv1_2,
-                    random: Random::from(randoms.server),
-                    session_id: *session_id,
-                    cipher_suite: suite.common.suite,
-                    compression_method: Compression::Null,
-                    extensions,
-                }),
-            )),
+        let sh = if let Some(prepared) = &cx.data.reality {
+            prepared.message()?
+        } else {
+            Message {
+                version: ProtocolVersion::TLSv1_2,
+                payload: MessagePayload::handshake(HandshakeMessagePayload(
+                    HandshakePayload::ServerHello(ServerHelloPayload {
+                        legacy_version: ProtocolVersion::TLSv1_2,
+                        random: Random::from(randoms.server),
+                        session_id: *session_id,
+                        cipher_suite: suite.common.suite,
+                        compression_method: Compression::Null,
+                        extensions,
+                    }),
+                )),
+            }
         };
 
         cx.common.check_aligned_handshake()?;
 
         let client_hello_hash = transcript.hash_given(&[]);
 
-        trace!("sending server hello {sh:?}");
+        if cx.data.reality.is_none() {
+            trace!("sending server hello {sh:?}");
+        }
         transcript.add_message(&sh);
         cx.common.send_msg(sh, false);
 
@@ -859,7 +872,7 @@ mod client_hello {
         cx: &mut ServerContext<'_>,
         key_schedule: KeyScheduleHandshake,
         config: &ServerConfig,
-    ) -> KeyScheduleTrafficWithClientFinishedPending {
+    ) -> Result<KeyScheduleTrafficWithClientFinishedPending, Error> {
         let handshake_hash = flight.transcript.current_hash();
         let verify_data = key_schedule.sign_server_finish(&handshake_hash);
         let verify_data_payload = Payload::new(verify_data.as_ref());
@@ -869,16 +882,30 @@ mod client_hello {
         trace!("sending finished {fin:?}");
         flight.add(fin);
         let hash_at_server_fin = flight.transcript.current_hash();
-        flight.finish(cx.common);
+        let plan = cx
+            .data
+            .reality
+            .take()
+            .and_then(|prepared| prepared.flight);
+        if let Some(plan) = &plan {
+            flight.finish_reality(cx.common, plan)?;
+        } else {
+            flight.finish(cx.common);
+        }
 
         // Now move to application data keys.  Read key change is deferred until
         // the Finish message is received & validated.
-        key_schedule.into_traffic_with_client_finished_pending(
+        let traffic = key_schedule.into_traffic_with_client_finished_pending(
             hash_at_server_fin,
             &*config.key_log,
             &randoms.client,
             cx.common,
-        )
+        );
+        if let Some(wire_len) = plan.and_then(|plan| plan.trailing) {
+            cx.common
+                .send_reality_record(&[], ContentType::ApplicationData, wire_len)?;
+        }
+        Ok(traffic)
     }
 }
 
