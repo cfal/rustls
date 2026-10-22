@@ -5,11 +5,9 @@ if [[ $# != 2 ]]; then
     printf 'Usage: bash .fork/rebase.sh UPSTREAM_REF NEW_WORKTREE\n' >&2
     exit 2
 fi
-base=$(cat .fork/upstream-base)
 target=$(git rev-parse --verify "$1^{commit}")
 source=$(git rev-parse HEAD)
-git merge-base --is-ancestor "$base" "$target"
-git merge-base --is-ancestor "$base" "$source"
+base=$(git merge-base "$source" "$target")
 if [[ -n $(git status --porcelain) ]]; then
     printf 'Commit or stash changes before preparing an upgrade.\n' >&2
     exit 1
@@ -22,14 +20,9 @@ fi
 branch="reality-rebase/$(date -u +%Y%m%dT%H%M%SZ)-${target:0:12}"
 git worktree add -b "$branch" "$2" "$source"
 if ! git -C "$2" rebase --onto "$target" "$base"; then
-    printf 'Resolve conflicts in %s, then run git rebase --continue and the checks. Main is untouched.\n' "$2" >&2
+    printf 'Resolve conflicts in %s, then run git rebase --continue. Main is untouched.\n' "$2" >&2
+    printf 'After completion, in that worktree run:\n  git range-diff %s..%s %s..HEAD\n  bash .fork/check.sh %s\n' "$base" "$source" "$target" "$target" >&2
     exit 1
 fi
-# Metadata follows the rebased patch series, not an upstream version guessed from Cargo.lock.
-printf '%s\n' "$target" > "$2/.fork/upstream-base"
-git -C "$2" add .fork/upstream-base
-if ! git -C "$2" diff --cached --quiet; then
-    git -C "$2" commit -m "Record upstream base for rustls $version"
-fi
 git range-diff "$base..$source" "$target..$branch"
-printf '\nCandidate: %s\nRun: cd %q && bash .fork/check.sh\nNo remote refs were updated.\n' "$branch" "$2"
+printf '\nCandidate: %s\nRun: cd %q && bash .fork/check.sh %s\nNo remote refs were updated.\n' "$branch" "$2" "$target"

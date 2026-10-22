@@ -1,7 +1,8 @@
 # Maintaining cfal/rustls
 
 `main` is a rebased patch series over upstream `rel-0.23`. It is not upstream's
-breaking `0.24` development branch. `.fork/upstream-base` records the exact base.
+breaking `0.24` development branch. Git's merge-base with the fetched upstream
+branch identifies the base, including after a manually resolved rebase.
 REALITY APIs are opt-in and connection-owned; ordinary TLS and QUIC retain the
 upstream paths. Record padding is supported by the AWS-LC provider only.
 
@@ -12,8 +13,12 @@ upstream paths. Record padding is supported by the AWS-LC provider only.
 2. Run `bash .fork/rebase.sh upstream/rel-0.23 "$HOME/tmp/rustls-upgrade"`.
    This creates a separate candidate branch/worktree. It never changes `main`
    or pushes. Resolve conflicts there; inspect the printed range-diff and
-   upstream security/release notes. A `0.24` target is deliberately rejected.
-3. In the candidate, run `bash .fork/check.sh`. Use an external
+   upstream security/release notes. After a conflict, finish `git rebase --continue`
+   and run the exact range-diff/check commands printed by the script. There is no
+   base metadata to finalize and no accumulating per-upgrade bookkeeping commit.
+   A `0.24` target is deliberately rejected.
+3. In the candidate, run `bash .fork/check.sh upstream/rel-0.23` (or the exact
+   upstream commit printed by the script). Use an external
    `CARGO_TARGET_DIR` on constrained machines. Review every affected invariant:
    finalized ClientHello/SID state, exact transcript bytes, provider-owned
    exchange binding, config isolation, and record padding/epochs.
@@ -35,7 +40,9 @@ upstream paths. Record padding is supported by the AWS-LC provider only.
 The scheduled workflow prepares and validates an upgrade candidate, then
 uploads a Git bundle and range-diff for review. It does not automatically
 rewrite `main`, modify consumer pins, or publish releases. Fork Actions must
-be enabled in GitHub for scheduled checks to run.
+be enabled in GitHub for scheduled checks to run. Disable inherited upstream
+scheduled workflows in the fork; enable only this candidate workflow unless
+additional upstream jobs are deliberately wanted.
 
 ## Consumer Contract
 

@@ -9,7 +9,7 @@ jobs:
   candidate:
     if: github.repository == 'cfal/rustls'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: 1
       CARGO_INCREMENTAL: 0
@@ -30,12 +30,12 @@ jobs:
           git config user.email 'noreply@github.com'
       - name: Prepare candidate without changing main
         run: bash .fork/rebase.sh upstream/rel-0.23 "$HOME/rustls-candidate" > "$RUNNER_TEMP/rebase-range-diff.txt"
-      - name: Check candidate
-        working-directory: /home/runner/rustls-candidate
-        run: bash .fork/check.sh
       - name: Export reviewed-input candidate
         run: |
           git -C "$HOME/rustls-candidate" bundle create "$GITHUB_WORKSPACE/rebase-candidate.bundle" HEAD
+      - name: Check candidate
+        working-directory: /home/runner/rustls-candidate
+        run: bash .fork/check.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
