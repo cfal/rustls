@@ -331,6 +331,8 @@ impl From<PeerMisbehaved> for Error {
 /// This is `non_exhaustive`: we might add or stop using items here in minor
 /// versions.
 pub enum PeerIncompatible {
+    /// A REALITY template or handshake cannot be represented without changing its wire shape.
+    RealityUnsupported,
     EcPointsExtensionRequired,
     ExtendedMasterSecretExtensionRequired,
     IncorrectCertificateTypeExtension,
