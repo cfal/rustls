@@ -16,9 +16,11 @@ upstream paths. Record padding is supported by the AWS-LC provider only.
    upstream security/release notes. After a conflict, finish `git rebase --continue`
    and run the exact range-diff/check commands printed by the script. There is no
    base metadata to finalize and no accumulating per-upgrade bookkeeping commit.
-   A `0.24` target is deliberately rejected.
+   Targets outside the fetched compatible branch, older than the current base,
+   and `0.24` targets are rejected. Fork patches must form a linear series.
 3. In the candidate, run `bash .fork/check.sh upstream/rel-0.23` (or the exact
-   upstream commit printed by the script). Use an external
+   upstream commit printed by the script). Commit all resolutions first; the
+   validation gate refuses dirty candidates. Use an external
    `CARGO_TARGET_DIR` on constrained machines. Review every affected invariant:
    finalized ClientHello/SID state, exact transcript bytes, provider-owned
    exchange binding, config isolation, and record padding/epochs.
@@ -29,9 +31,10 @@ upstream paths. Record padding is supported by the AWS-LC provider only.
    `cfal-reality-0.23.46-1`. Never move or delete a published tag. Pin Shoes to
    the full commit ID, not `main`; update its lockfile. Tags keep old pins
    reachable even after later rebases.
-6. Fetch `origin/main`, record its exact commit ID, and inspect changes since
-   your previous base. Promote only the reviewed candidate with
-   `git push --force-with-lease=refs/heads/main:<observed-id> origin HEAD:main`.
+6. Fetch `origin/main` and require it to equal the `Source:` commit printed when
+   preparing this candidate. If it changed, prepare a new candidate containing
+   those intervening fork patches. Promote only the reviewed candidate with
+   `git push --force-with-lease=refs/heads/main:<source-id> origin HEAD:main`.
    Never use unrestricted `--force`. Preserve a tag for the previous deployed
    revision before replacing `main`.
 7. Remove the candidate worktree after promotion, retain release tags, and
