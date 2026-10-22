@@ -378,3 +378,26 @@ impl MessageDecrypter for InvalidMessageDecrypter {
         Err(Error::DecryptError)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_padding_is_a_local_provider_error() {
+        let message = || OutboundPlainMessage {
+            typ: ContentType::ApplicationData,
+            version: ProtocolVersion::TLSv1_2,
+            payload: (&b"test"[..]).into(),
+        };
+        let mut encrypter = InvalidMessageEncrypter {};
+        assert!(matches!(
+            encrypter.encrypt_with_padding(message(), 0, 1),
+            Err(Error::General(_))
+        ));
+        assert!(matches!(
+            encrypter.encrypt_with_padding(message(), 0, 0),
+            Err(Error::EncryptError)
+        ));
+    }
+}
