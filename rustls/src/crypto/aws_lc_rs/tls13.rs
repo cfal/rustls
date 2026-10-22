@@ -240,7 +240,11 @@ impl MessageEncrypter for AeadMessageEncrypter {
         seq: u64,
         padding: usize,
     ) -> Result<OutboundOpaqueMessage, Error> {
-        let plain_len = crate::reality::padded_plaintext_len(msg.payload.len(), padding)?;
+        let plain_len = if padding == 0 {
+            msg.payload.len()
+        } else {
+            crate::reality::padded_plaintext_len(msg.payload.len(), padding)?
+        };
         let total_len = self.encrypted_payload_len(plain_len);
         let mut payload = PrefixedPayload::with_capacity(total_len);
 
@@ -312,7 +316,11 @@ impl MessageEncrypter for GcmMessageEncrypter {
         seq: u64,
         padding: usize,
     ) -> Result<OutboundOpaqueMessage, Error> {
-        let plain_len = crate::reality::padded_plaintext_len(msg.payload.len(), padding)?;
+        let plain_len = if padding == 0 {
+            msg.payload.len()
+        } else {
+            crate::reality::padded_plaintext_len(msg.payload.len(), padding)?
+        };
         let total_len = self.encrypted_payload_len(plain_len);
         let mut payload = PrefixedPayload::with_capacity(total_len);
 
