@@ -385,19 +385,42 @@ mod tests {
 
     #[test]
     fn unsupported_padding_is_a_local_provider_error() {
+        struct Encrypter {
+            called: bool,
+        }
+        impl MessageEncrypter for Encrypter {
+            fn encrypt(
+                &mut self,
+                message: OutboundPlainMessage<'_>,
+                seq: u64,
+            ) -> Result<OutboundOpaqueMessage, Error> {
+                self.called = true;
+                assert_eq!(message.typ, ContentType::ApplicationData);
+                assert_eq!(message.version, ProtocolVersion::TLSv1_2);
+                assert_eq!(message.payload.to_vec(), b"test");
+                assert_eq!(seq, 17);
+                Err(Error::EncryptError)
+            }
+
+            fn encrypted_payload_len(&self, len: usize) -> usize {
+                len
+            }
+        }
         let message = || OutboundPlainMessage {
             typ: ContentType::ApplicationData,
             version: ProtocolVersion::TLSv1_2,
             payload: (&b"test"[..]).into(),
         };
-        let mut encrypter = InvalidMessageEncrypter {};
+        let mut encrypter = Encrypter { called: false };
         assert!(matches!(
-            encrypter.encrypt_with_padding(message(), 0, 1),
+            encrypter.encrypt_with_padding(message(), 17, 1),
             Err(Error::General(_))
         ));
+        assert!(!encrypter.called);
         assert!(matches!(
-            encrypter.encrypt_with_padding(message(), 0, 0),
+            encrypter.encrypt_with_padding(message(), 17, 0),
             Err(Error::EncryptError)
         ));
+        assert!(encrypter.called);
     }
 }
